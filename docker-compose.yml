@@ -1,0 +1,36 @@
+services:
+  public-ip:
+    build: .
+    container_name: public-ip
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      PORT: "3000"
+      BIND_ADDR: "0.0.0.0"
+      DOMAIN: "ip.rootik.cz"
+      TITLE: "public ip"
+      # Comma-separated CIDRs of your reverse proxy.
+      # Docker default bridge + common private ranges shown as example.
+      TRUSTED_PROXIES: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/public-ip", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
