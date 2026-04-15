@@ -94,14 +94,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          path: artifacts
           merge-multiple: true
 
       - name: Create checksums
+        working-directory: artifacts
         run: sha256sum public-ip-* > checksums.txt
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            public-ip-*
-            checksums.txt
+            artifacts/public-ip-*
+            artifacts/checksums.txt
