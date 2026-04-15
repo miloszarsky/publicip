@@ -14,43 +14,45 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
 
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+      - name: Build binaries
         run: |
-          EXT=""
-          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          go build -ldflags="-s -w" -o public-ip-${GOOS}-${GOARCH}${EXT} .
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+          )
+          mkdir -p dist
+          for platform in "${platforms[@]}"; do
+            GOOS="${platform%/*}"
+            GOARCH="${platform#*/}"
+            output="dist/public-ip-${GOOS}-${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then output="${output}.exe"; fi
+            echo "Building ${GOOS}/${GOARCH}..."
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -ldflags="-s -w" -o "$output" .
+          done
 
-      - uses: actions/upload-artifact@v4
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum public-ip-* > checksums.txt
+
+      - uses: softprops/action-gh-release@v2
         with:
-          name: public-ip-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: public-ip-*
+          generate_release_notes: true
+          files: |
+            dist/public-ip-*
+            dist/checksums.txt
 
   docker:
     runs-on: ubuntu-latest
@@ -87,23 +89,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  release:
-    needs: [build, docker]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create checksums
-        working-directory: artifacts
-        run: sha256sum public-ip-* > checksums.txt
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            artifacts/public-ip-*
-            artifacts/checksums.txt
