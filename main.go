@@ -19,6 +19,8 @@ type Config struct {
 	Port           string
 	BindAddr       string
 	Domain         string
+	V4Domain       string
+	V6Domain       string
 	Title          string
 	TrustedProxies []*net.IPNet
 }
@@ -29,8 +31,10 @@ type IPInfo struct {
 }
 
 type templateData struct {
-	Title  string
-	Domain string
+	Title    string
+	Domain   string
+	V4Domain string
+	V6Domain string
 }
 
 func loadConfig() Config {
@@ -38,6 +42,8 @@ func loadConfig() Config {
 		Port:     envOrDefault("PORT", "3000"),
 		BindAddr: envOrDefault("BIND_ADDR", "0.0.0.0"),
 		Domain:   envOrDefault("DOMAIN", "localhost"),
+		V4Domain: os.Getenv("V4_DOMAIN"),
+		V6Domain: os.Getenv("V6_DOMAIN"),
 		Title:    envOrDefault("TITLE", "public ip"),
 	}
 
@@ -159,10 +165,18 @@ func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		tmpl.Execute(w, templateData{Title: cfg.Title, Domain: cfg.Domain})
+		tmpl.Execute(w, templateData{
+			Title:    cfg.Title,
+			Domain:   cfg.Domain,
+			V4Domain: cfg.V4Domain,
+			V6Domain: cfg.V6Domain,
+		})
 	})
 
 	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 		clientIP := cfg.getClientIP(r)
 		writeJSON(w, IPInfo{IP: clientIP, Version: ipVersion(clientIP)})
 	})
@@ -352,7 +366,13 @@ const htmlTemplate = `<!DOCTYPE html>
     color: var(--muted);
   }
 
-  .loading .ip { animation: pulse 1.2s ease infinite; }
+  .ip-entry + .ip-entry {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .ip-entry.loading .ip { animation: pulse 1.2s ease infinite; }
   @keyframes pulse {
     0%, 100% { opacity: .3; }
     50%      { opacity: .7; }
@@ -362,9 +382,15 @@ const htmlTemplate = `<!DOCTYPE html>
 <body>
   <h1><span>&gt;</span> {{.Title}}</h1>
 
-  <div class="card loading" id="card">
-    <span class="badge" id="badge">detecting...</span>
-    <div class="ip" id="ip">...</div>
+  <div class="card" id="card">
+    <div class="ip-entry loading" id="entry-main">
+      <span class="badge" id="badge-main">detecting...</span>
+      <div class="ip" id="ip-main">...</div>
+    </div>
+    <div class="ip-entry loading" id="entry-alt" style="display:none">
+      <span class="badge" id="badge-alt">detecting...</span>
+      <div class="ip" id="ip-alt">...</div>
+    </div>
     <button class="copy-btn" id="copy" onclick="copyIP()">Copy to clipboard</button>
   </div>
 
@@ -381,23 +407,66 @@ const htmlTemplate = `<!DOCTYPE html>
   <footer>Lightweight &middot; IPv4 + IPv6 &middot; No tracking</footer>
 
 <script>
+  var v4Domain = {{.V4Domain}};
+  var v6Domain = {{.V6Domain}};
+
+  function fillEntry(suffix, data) {
+    var entry = document.getElementById("entry-" + suffix);
+    entry.style.display = "";
+    document.getElementById("ip-" + suffix).textContent = data.ip;
+    var badge = document.getElementById("badge-" + suffix);
+    badge.textContent = data.version;
+    badge.className = "badge " + data.version.toLowerCase();
+    entry.classList.remove("loading");
+  }
+
+  async function fetchFrom(url) {
+    var res = await fetch(url);
+    return res.json();
+  }
+
   async function fetchIP() {
-    try {
-      const res = await fetch("/api");
-      const data = await res.json();
-      document.getElementById("ip").textContent = data.ip;
-      const badge = document.getElementById("badge");
-      badge.textContent = data.version;
-      badge.className = "badge " + data.version.toLowerCase();
-      document.getElementById("card").classList.remove("loading");
-    } catch (e) {
-      document.getElementById("ip").textContent = "unable to detect";
+    if (v4Domain && v6Domain) {
+      var scheme = location.protocol + "//";
+      var results = await Promise.allSettled([
+        fetchFrom(scheme + v4Domain + "/api"),
+        fetchFrom(scheme + v6Domain + "/api"),
+      ]);
+      var filled = false;
+      if (results[0].status === "fulfilled") {
+        fillEntry("main", results[0].value);
+        filled = true;
+      }
+      if (results[1].status === "fulfilled") {
+        if (!filled) {
+          fillEntry("main", results[1].value);
+        } else {
+          fillEntry("alt", results[1].value);
+        }
+        filled = true;
+      }
+      if (!filled) {
+        document.getElementById("ip-main").textContent = "unable to detect";
+        document.getElementById("entry-main").classList.remove("loading");
+      }
+    } else {
+      try {
+        var data = await fetchFrom("/api");
+        fillEntry("main", data);
+      } catch (e) {
+        document.getElementById("ip-main").textContent = "unable to detect";
+        document.getElementById("entry-main").classList.remove("loading");
+      }
     }
   }
 
   function copyIP() {
-    const ip = document.getElementById("ip").textContent;
-    navigator.clipboard.writeText(ip).then(function() {
+    var ips = [];
+    var main = document.getElementById("ip-main").textContent;
+    if (main && main !== "..." && main !== "unable to detect") ips.push(main);
+    var alt = document.getElementById("ip-alt").textContent;
+    if (alt && alt !== "..." && document.getElementById("entry-alt").style.display !== "none") ips.push(alt);
+    navigator.clipboard.writeText(ips.join("\n")).then(function() {
       var btn = document.getElementById("copy");
       btn.textContent = "Copied!";
       setTimeout(function() { btn.textContent = "Copy to clipboard"; }, 1500);
