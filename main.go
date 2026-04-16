@@ -290,7 +290,7 @@ const htmlTemplate = `<!DOCTYPE html>
   }
 
   .ip {
-    font-size: 2.2rem;
+    font-size: clamp(1.2rem, 5vw, 2.2rem);
     font-weight: 700;
     letter-spacing: .01em;
     word-break: break-all;
@@ -372,10 +372,10 @@ const htmlTemplate = `<!DOCTYPE html>
 
   <div class="cli">
     <div><span class="comment"># plain text</span></div>
-    <div>$ <code>curl {{.Domain}}</code></div>
+    <div>$ <code>curl -L {{.Domain}}</code></div>
     <br>
     <div><span class="comment"># json</span></div>
-    <div>$ <code>curl -H "Accept: application/json" {{.Domain}}</code></div>
+    <div>$ <code>curl -L -H "Accept: application/json" {{.Domain}}</code></div>
   </div>
 
   <footer>Lightweight &middot; IPv4 + IPv6 &middot; No tracking</footer>
