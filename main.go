@@ -136,6 +136,32 @@ func isCLI(r *http.Request) bool {
 	return false
 }
 
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func logMiddleware(cfg *Config, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration", time.Since(start).String(),
+			"client_ip", cfg.getClientIP(r),
+			"user_agent", r.Header.Get("User-Agent"),
+		)
+	})
+}
+
 func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -213,7 +239,7 @@ func main() {
 	addr := net.JoinHostPort(cfg.BindAddr, cfg.Port)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      newMux(&cfg, tmpl),
+		Handler:      logMiddleware(&cfg, newMux(&cfg, tmpl)),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -373,6 +399,7 @@ const htmlTemplate = `<!DOCTYPE html>
   }
 
   .ip-entry.loading .ip { animation: pulse 1.2s ease infinite; }
+  .ip-entry.unavailable .ip { color: var(--muted); font-size: 1rem; font-weight: 400; }
   @keyframes pulse {
     0%, 100% { opacity: .3; }
     50%      { opacity: .7; }
@@ -383,13 +410,13 @@ const htmlTemplate = `<!DOCTYPE html>
   <h1><span>&gt;</span> {{.Title}}</h1>
 
   <div class="card" id="card">
-    <div class="ip-entry loading" id="entry-main">
-      <span class="badge" id="badge-main">detecting...</span>
-      <div class="ip" id="ip-main">...</div>
+    <div class="ip-entry loading" id="entry-v4">
+      <span class="badge ipv4">IPv4</span>
+      <div class="ip" id="ip-v4">...</div>
     </div>
-    <div class="ip-entry loading" id="entry-alt" style="display:none">
-      <span class="badge" id="badge-alt">detecting...</span>
-      <div class="ip" id="ip-alt">...</div>
+    <div class="ip-entry loading" id="entry-v6">
+      <span class="badge ipv6">IPv6</span>
+      <div class="ip" id="ip-v6">...</div>
     </div>
     <button class="copy-btn" id="copy" onclick="copyIP()">Copy to clipboard</button>
   </div>
@@ -410,14 +437,17 @@ const htmlTemplate = `<!DOCTYPE html>
   var v4Domain = {{.V4Domain}};
   var v6Domain = {{.V6Domain}};
 
-  function fillEntry(suffix, data) {
-    var entry = document.getElementById("entry-" + suffix);
-    entry.style.display = "";
-    document.getElementById("ip-" + suffix).textContent = data.ip;
-    var badge = document.getElementById("badge-" + suffix);
-    badge.textContent = data.version;
-    badge.className = "badge " + data.version.toLowerCase();
+  function resolve(version, ip) {
+    var entry = document.getElementById("entry-" + version);
+    document.getElementById("ip-" + version).textContent = ip;
     entry.classList.remove("loading");
+  }
+
+  function markUnavailable(version) {
+    var entry = document.getElementById("entry-" + version);
+    document.getElementById("ip-" + version).textContent = "not available";
+    entry.classList.remove("loading");
+    entry.classList.add("unavailable");
   }
 
   async function fetchFrom(url) {
@@ -432,40 +462,36 @@ const htmlTemplate = `<!DOCTYPE html>
         fetchFrom(scheme + v4Domain + "/api"),
         fetchFrom(scheme + v6Domain + "/api"),
       ]);
-      var filled = false;
       if (results[0].status === "fulfilled") {
-        fillEntry("main", results[0].value);
-        filled = true;
+        resolve("v4", results[0].value.ip);
+      } else {
+        markUnavailable("v4");
       }
       if (results[1].status === "fulfilled") {
-        if (!filled) {
-          fillEntry("main", results[1].value);
-        } else {
-          fillEntry("alt", results[1].value);
-        }
-        filled = true;
-      }
-      if (!filled) {
-        document.getElementById("ip-main").textContent = "unable to detect";
-        document.getElementById("entry-main").classList.remove("loading");
+        resolve("v6", results[1].value.ip);
+      } else {
+        markUnavailable("v6");
       }
     } else {
       try {
         var data = await fetchFrom("/api");
-        fillEntry("main", data);
+        resolve(data.version === "IPv6" ? "v6" : "v4", data.ip);
+        markUnavailable(data.version === "IPv6" ? "v4" : "v6");
       } catch (e) {
-        document.getElementById("ip-main").textContent = "unable to detect";
-        document.getElementById("entry-main").classList.remove("loading");
+        markUnavailable("v4");
+        markUnavailable("v6");
       }
     }
   }
 
   function copyIP() {
     var ips = [];
-    var main = document.getElementById("ip-main").textContent;
-    if (main && main !== "..." && main !== "unable to detect") ips.push(main);
-    var alt = document.getElementById("ip-alt").textContent;
-    if (alt && alt !== "..." && document.getElementById("entry-alt").style.display !== "none") ips.push(alt);
+    ["v4", "v6"].forEach(function(v) {
+      if (!document.getElementById("entry-" + v).classList.contains("unavailable")) {
+        ips.push(document.getElementById("ip-" + v).textContent);
+      }
+    });
+    if (!ips.length) return;
     navigator.clipboard.writeText(ips.join("\n")).then(function() {
       var btn = document.getElementById("copy");
       btn.textContent = "Copied!";
