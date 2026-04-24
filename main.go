@@ -165,12 +165,7 @@ func logMiddleware(cfg *Config, next http.Handler) http.Handler {
 func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		clientIP := cfg.getClientIP(r)
 		version := ipVersion(clientIP)
 
