@@ -146,27 +146,43 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+type contextKey string
+
+const clientIPKey contextKey = "clientIP"
+
 func logMiddleware(cfg *Config, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		clientIP := cfg.getClientIP(r)
+		ctx := context.WithValue(r.Context(), clientIPKey, clientIP)
+		r = r.WithContext(ctx)
+
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rw, r)
+
 		slog.Info("request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,
 			"duration", time.Since(start).String(),
-			"client_ip", cfg.getClientIP(r),
+			"client_ip", clientIP,
 			"user_agent", r.Header.Get("User-Agent"),
 		)
 	})
+}
+
+func getIPFromContext(r *http.Request) string {
+	if ip, ok := r.Context().Value(clientIPKey).(string); ok {
+		return ip
+	}
+	return ""
 }
 
 func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		clientIP := cfg.getClientIP(r)
+		clientIP := getIPFromContext(r)
 		version := ipVersion(clientIP)
 
 		if isCLI(r) {
@@ -201,7 +217,7 @@ func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
 		}
 
-		clientIP := cfg.getClientIP(r)
+		clientIP := getIPFromContext(r)
 		writeJSON(w, IPInfo{IP: clientIP, Version: ipVersion(clientIP)})
 	})
 
@@ -225,7 +241,13 @@ func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(v)
+	buf, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("json marshal failed", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Write(buf)
 }
 
 func main() {
