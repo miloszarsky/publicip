@@ -194,25 +194,24 @@ func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 		})
 	})
 
-	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
 		}
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		clientIP := cfg.getClientIP(r)
 		writeJSON(w, IPInfo{IP: clientIP, Version: ipVersion(clientIP)})
+	})
+
+	mux.HandleFunc("OPTIONS /api", func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
