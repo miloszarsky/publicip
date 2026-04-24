@@ -199,10 +199,23 @@ func newMux(cfg *Config, tmpl *template.Template) *http.ServeMux {
 		})
 	})
 
-	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
 		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		clientIP := cfg.getClientIP(r)
 		writeJSON(w, IPInfo{IP: clientIP, Version: ipVersion(clientIP)})
 	})
@@ -458,20 +471,16 @@ const htmlTemplate = `<!DOCTYPE html>
   async function fetchIP() {
     if (v4Domain && v6Domain) {
       var scheme = location.protocol + "//";
-      var results = await Promise.allSettled([
-        fetchFrom(scheme + v4Domain + "/api"),
-        fetchFrom(scheme + v6Domain + "/api"),
-      ]);
-      if (results[0].status === "fulfilled") {
-        resolve("v4", results[0].value.ip);
-      } else {
-        markUnavailable("v4");
-      }
-      if (results[1].status === "fulfilled") {
-        resolve("v6", results[1].value.ip);
-      } else {
-        markUnavailable("v6");
-      }
+      
+      // Fetch v4
+      fetchFrom(scheme + v4Domain + "/api")
+        .then(function(data) { resolve("v4", data.ip); })
+        .catch(function() { markUnavailable("v4"); });
+
+      // Fetch v6
+      fetchFrom(scheme + v6Domain + "/api")
+        .then(function(data) { resolve("v6", data.ip); })
+        .catch(function() { markUnavailable("v6"); });
     } else {
       try {
         var data = await fetchFrom("/api");

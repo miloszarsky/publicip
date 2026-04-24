@@ -68,8 +68,25 @@ All settings are controlled via environment variables:
 | `PORT` | `3000` | Listen port |
 | `BIND_ADDR` | `0.0.0.0` | Bind address |
 | `DOMAIN` | `localhost` | Domain shown in the UI curl examples |
+| `V4_DOMAIN` | *(empty)* | IPv4-only subdomain for dual-stack UI |
+| `V6_DOMAIN` | *(empty)* | IPv6-only subdomain for dual-stack UI |
 | `TITLE` | `public ip` | Page title and heading |
 | `TRUSTED_PROXIES` | *(empty)* | Comma-separated CIDRs allowed to set `X-Forwarded-For`. Single IPs are accepted (e.g. `10.0.0.1`). When empty, proxy headers are ignored and `RemoteAddr` is used. |
+
+## Dual-stack UI
+
+To show both IPv4 and IPv6 addresses simultaneously in the browser, you need to provide subdomains that resolve only to their respective IP versions. This bypasses the browser's tendency to prefer one protocol over the other.
+
+1. Create a subdomain (e.g., `v4.ip.example.com`) with only an **A record**.
+2. Create another subdomain (e.g., `v6.ip.example.com`) with only an **AAAA record**.
+3. Set the `V4_DOMAIN` and `V6_DOMAIN` environment variables.
+
+**Note:** Ensure your reverse proxy (Nginx, Traefik, etc.) is configured to handle these subdomains and forward them to the service. For example, in Nginx, you should add them to the `server_name` directive:
+```nginx
+server_name ip.example.com v4.ip.example.com v6.ip.example.com;
+```
+
+The UI will then perform background requests to both domains to fetch and display both addresses.
 
 ## Reverse proxy setup
 
